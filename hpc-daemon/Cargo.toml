@@ -1,0 +1,38 @@
+[package]
+name = "hpc-daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Cluster management daemon: gRPC control plane, redb-backed state, axum REST API"
+
+[[bin]]
+name = "hpc-daemon"
+path = "src/main.rs"
+
+[dependencies]
+hpc-core.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+futures.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+prost.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+redb.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+uuid.workspace = true
+
+[build-dependencies]
+tonic-prost-build.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

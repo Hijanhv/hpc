@@ -1,0 +1,21 @@
+# hpc-monitor configuration.
+# Every field is optional; omitted values fall back to built-in defaults.
+
+# Base URL of the daemon REST API to scrape.
+daemon_api = "http://127.0.0.1:8080"
+# Address to expose the Prometheus /metrics endpoint on.
+metrics_addr = "0.0.0.0:9090"
+# How often to poll the daemon for cluster state.
+scrape_interval = "15s"
+
+# Degradation thresholds (shared shape with the daemon).
+[thresholds]
+cpu_degraded = 0.90
+memory_degraded = 0.90
+disk_degraded = 0.85
+load_per_core_degraded = 2.0
+
+[log]
+filter = "info"
+json = false
+with_location = false

@@ -1,0 +1,30 @@
+[package]
+name = "hpc-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Async filesystem I/O benchmark suite with latency histograms"
+
+[lib]
+name = "hpc_bench"
+path = "src/lib.rs"
+
+[dependencies]
+hpc-core.workspace = true
+tokio = { workspace = true }
+serde.workspace = true
+tracing.workspace = true
+hdrhistogram.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+tokio.workspace = true
+tempfile = "3"
+
+[[bench]]
+name = "io_bench"
+harness = false

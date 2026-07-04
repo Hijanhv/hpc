@@ -1,0 +1,25 @@
+[package]
+name = "hpc-monitor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Prometheus exporter and degradation detector for the HPC cluster"
+
+[[bin]]
+name = "hpc-monitor"
+path = "src/main.rs"
+
+[dependencies]
+hpc-core.workspace = true
+tokio.workspace = true
+axum.workspace = true
+reqwest.workspace = true
+prometheus.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+clap.workspace = true
+anyhow.workspace = true

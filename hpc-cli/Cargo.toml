@@ -1,0 +1,25 @@
+[package]
+name = "hpc-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Operator CLI for the HPC framework (node / fs / bench subcommands)"
+
+[[bin]]
+name = "hpc"
+path = "src/main.rs"
+
+[dependencies]
+hpc-core.workspace = true
+hpc-bench = { path = "../hpc-bench" }
+tokio.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+comfy-table.workspace = true

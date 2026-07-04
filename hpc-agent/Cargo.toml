@@ -1,0 +1,30 @@
+[package]
+name = "hpc-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Per-node agent: collects sysinfo + /proc metrics and dials the daemon over gRPC"
+
+[[bin]]
+name = "hpc-agent"
+path = "src/main.rs"
+
+[dependencies]
+hpc-core.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+futures.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+prost.workspace = true
+sysinfo.workspace = true
+serde.workspace = true
+tracing.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+
+[build-dependencies]
+tonic-prost-build.workspace = true

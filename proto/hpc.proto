@@ -1,0 +1,232 @@
+syntax = "proto3";
+
+// HPC filesystem management framework — control-plane protocol.
+//
+// Topology: node agents are gRPC *clients* that dial out to the daemon
+// (which hosts the server). This is deliberate — agents typically live on
+// storage/compute nodes behind restrictive firewalls, so having them dial
+// out avoids inbound connectivity requirements and NAT traversal.
+//
+// The daemon still needs to *push* work (deploys, mount operations) to
+// agents. It does so over a long-lived server-streaming RPC (`StreamCommands`)
+// that the agent opens on registration; the daemon writes `Command`s down
+// that stream as they are scheduled. Agents acknowledge completion with
+// `ReportCommandResult`.
+package hpc.v1;
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+service ClusterService {
+  // Called once when an agent starts. Idempotent: re-registering an existing
+  // node updates its record rather than creating a duplicate.
+  rpc RegisterNode(NodeInfo) returns (RegisterAck);
+
+  // Periodic liveness signal. Cheaper than a full metrics report and used by
+  // the daemon's degradation detector to decide when a node is unreachable.
+  rpc Heartbeat(NodeRef) returns (HeartbeatAck);
+
+  // Periodic (or client-streamed) resource metrics. Implemented as
+  // client-streaming so an agent can push a burst of samples on one RPC.
+  rpc ReportMetrics(stream MetricsReport) returns (MetricsAck);
+
+  // Long-lived server stream: the daemon pushes scheduled commands (deploys,
+  // filesystem operations) to the agent as they arrive.
+  rpc StreamCommands(NodeRef) returns (stream Command);
+
+  // Agents report the terminal outcome of a command they received on the
+  // command stream.
+  rpc ReportCommandResult(CommandResult) returns (Ack);
+}
+
+// ---------------------------------------------------------------------------
+// Core identity / info
+// ---------------------------------------------------------------------------
+
+enum NodeRole {
+  NODE_ROLE_UNSPECIFIED = 0;
+  NODE_ROLE_STORAGE = 1;   // holds filesystem data
+  NODE_ROLE_COMPUTE = 2;   // consumes the filesystem
+  NODE_ROLE_METADATA = 3;  // metadata / namespace server
+  NODE_ROLE_GATEWAY = 4;   // protocol gateway (NFS/S3/etc.)
+}
+
+// A lightweight reference to a node, used by RPCs that only need identity.
+message NodeRef {
+  string node_id = 1;
+  uint64 cluster_epoch = 2; // epoch the agent last observed; lets the daemon
+                            // detect a stale agent after a leader change.
+}
+
+// Static (slowly-changing) description of a node. Sent on registration.
+message NodeInfo {
+  string node_id = 1;
+  string hostname = 2;
+  string ip_address = 3;
+  NodeRole role = 4;
+  uint32 cpu_cores = 5;
+  uint64 total_memory_bytes = 6;
+  uint64 total_disk_bytes = 7;
+  string agent_version = 8;
+  string kernel_version = 9;
+  string os = 10;
+  uint64 started_at_unix = 11;
+  map<string, string> labels = 12; // free-form scheduling hints (rack, zone…)
+}
+
+// ---------------------------------------------------------------------------
+// Metrics
+// ---------------------------------------------------------------------------
+
+message CpuMetrics {
+  double usage_percent = 1;   // 0..100, aggregate across cores
+  repeated double per_core_percent = 2;
+}
+
+message MemoryMetrics {
+  uint64 total_bytes = 1;
+  uint64 used_bytes = 2;
+  uint64 available_bytes = 3;
+  uint64 swap_total_bytes = 4;
+  uint64 swap_used_bytes = 5;
+}
+
+message LoadMetrics {
+  double one = 1;
+  double five = 2;
+  double fifteen = 3;
+}
+
+message DiskMetrics {
+  string device = 1;
+  string mount_point = 2;
+  string fs_type = 3;
+  uint64 total_bytes = 4;
+  uint64 available_bytes = 5;
+  uint64 read_bytes_per_sec = 6;
+  uint64 write_bytes_per_sec = 7;
+  double io_utilization_percent = 8; // fraction of wall-time the device was busy
+}
+
+message NetworkMetrics {
+  uint64 rx_bytes_per_sec = 1;
+  uint64 tx_bytes_per_sec = 2;
+  uint64 rx_errors = 3;
+  uint64 tx_errors = 4;
+}
+
+// A managed filesystem's health from the node's point of view.
+message FilesystemMetrics {
+  string name = 1;
+  string mount_point = 2;
+  bool mounted = 3;
+  uint64 total_bytes = 4;
+  uint64 used_bytes = 5;
+  uint64 inodes_total = 6;
+  uint64 inodes_used = 7;
+}
+
+// One resource sample from a node.
+message MetricsReport {
+  string node_id = 1;
+  uint64 timestamp_unix = 2;
+  CpuMetrics cpu = 3;
+  MemoryMetrics memory = 4;
+  LoadMetrics load = 5;
+  repeated DiskMetrics disks = 6;
+  NetworkMetrics network = 7;
+  repeated FilesystemMetrics filesystems = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Commands (daemon -> agent)
+// ---------------------------------------------------------------------------
+
+enum DeployAction {
+  DEPLOY_ACTION_UNSPECIFIED = 0;
+  DEPLOY_ACTION_INSTALL = 1;
+  DEPLOY_ACTION_UPGRADE = 2;
+  DEPLOY_ACTION_ROLLBACK = 3;
+  DEPLOY_ACTION_REMOVE = 4;
+}
+
+// Instruction to deploy / upgrade a filesystem software component on a node.
+message DeployCommand {
+  string deployment_id = 1;
+  DeployAction action = 2;
+  string component = 3;      // e.g. "lustre-ost", "beegfs-storage"
+  string version = 4;        // target version
+  string target_path = 5;    // install prefix
+  map<string, string> options = 6;
+}
+
+enum FsAction {
+  FS_ACTION_UNSPECIFIED = 0;
+  FS_ACTION_MOUNT = 1;
+  FS_ACTION_UNMOUNT = 2;
+  FS_ACTION_REMOUNT = 3;
+  FS_ACTION_CHECK = 4;    // fsck / consistency check
+  FS_ACTION_FORMAT = 5;   // mkfs (guarded; refused unless force set)
+}
+
+// Instruction to perform a filesystem/mount operation on a node.
+message FsCommand {
+  string command_id = 1;
+  FsAction action = 2;
+  string device = 3;       // block device or network source
+  string mount_point = 4;
+  string fs_type = 5;      // ext4, xfs, lustre, nfs…
+  repeated string mount_options = 6;
+  bool force = 7;          // required for destructive actions (FORMAT)
+}
+
+// Envelope pushed down the command stream. Exactly one payload is set.
+message Command {
+  string command_id = 1;
+  uint64 issued_at_unix = 2;
+  oneof payload {
+    DeployCommand deploy = 3;
+    FsCommand fs = 4;
+  }
+}
+
+// Terminal outcome of a command, reported back by the agent.
+message CommandResult {
+  string command_id = 1;
+  string node_id = 2;
+  bool success = 3;
+  int32 exit_code = 4;
+  string message = 5;
+  string stdout = 6;
+  string stderr = 7;
+  uint64 completed_at_unix = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Acks
+// ---------------------------------------------------------------------------
+
+message RegisterAck {
+  bool accepted = 1;
+  string assigned_node_id = 2; // daemon may canonicalise the id
+  uint64 cluster_epoch = 3;
+  uint32 metrics_interval_secs = 4; // daemon-directed reporting cadence
+  string message = 5;
+}
+
+message HeartbeatAck {
+  bool ok = 1;
+  uint64 cluster_epoch = 2;
+  repeated string directives = 3; // e.g. "reregister", "drain"
+}
+
+message MetricsAck {
+  bool received = 1;
+  uint64 server_time_unix = 2;
+}
+
+message Ack {
+  bool ok = 1;
+  string message = 2;
+}

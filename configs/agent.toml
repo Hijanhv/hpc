@@ -1,0 +1,31 @@
+# hpc-agent configuration.
+# Every field is optional; omitted values fall back to built-in defaults.
+
+# gRPC endpoint of the daemon (note the http:// scheme).
+daemon_endpoint = "http://127.0.0.1:7443"
+# Stable node id. Leave empty to use the machine hostname.
+node_id = ""
+# Advertised role: storage | compute | metadata | gateway.
+role = "storage"
+
+# How often to sample and report metrics (the daemon may override this).
+metrics_interval = "10s"
+# Heartbeat cadence.
+heartbeat_interval = "5s"
+# Base backoff for reconnecting after a failure (grows exponentially, capped).
+reconnect_backoff = "2s"
+
+# Whether the agent may actually run mount/deploy commands.
+# false (default) = validate + log the argv as a dry-run; safe on any host.
+allow_exec = false
+
+# Free-form scheduling labels advertised at registration.
+# (Tables must come after all top-level keys in TOML.)
+[labels]
+rack = "r1"
+zone = "a"
+
+[log]
+filter = "info"
+json = false
+with_location = false
