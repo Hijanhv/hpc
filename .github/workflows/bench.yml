@@ -43,28 +43,41 @@ jobs:
             ${{ runner.os }}-bench-
             ${{ runner.os }}-cargo-
 
-      # Criterion's `bencher` output format is compact and stable, ideal for
-      # capturing into a comment or diffing between runs.
+      # Default criterion output includes a `change: [...]` line comparing each
+      # benchmark to the previously saved baseline in `target/criterion`, which
+      # the `target` cache above persists across runs (a PR restores the cache
+      # last saved on `main`). That is the delta reviewers care about.
       - name: Run benchmarks
-        run: cargo bench -p hpc-bench -- --output-format bencher | tee bench-output.txt
+        run: cargo bench -p hpc-bench | tee bench-output.txt
 
-      # On a pull request, surface the numbers inline so reviewers see the
-      # performance impact without leaving the PR.
+      # On a pull request, surface the measured times and the delta-vs-baseline
+      # inline so reviewers see the performance impact without leaving the PR.
       - name: Comment results on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const raw = fs.readFileSync('bench-output.txt', 'utf8').trim();
+            const raw = fs.readFileSync('bench-output.txt', 'utf8');
+            // Keep only benchmark id / time / change / verdict lines so the
+            // comment stays compact; fall back to the full log if none match.
+            const kept = raw
+              .split('\n')
+              .filter((l) => /(^\s*(io|ffi_raw)\/|time:|change:|(No change|Performance|Change) )/.test(l))
+              .join('\n')
+              .trim();
             const body = [
               '## 📊 hpc-bench (criterion)',
               '',
-              'Async buffered I/O (`io`) and raw FFI I/O (`ffi_raw`), ns/iter:',
+              'Async buffered I/O (`io`) vs. raw FFI I/O (`ffi_raw`). `change:` is the',
+              'delta versus the previous baseline cached from `main` (absent on first run).',
+              '',
+              '<details><summary>Benchmark output</summary>',
               '',
               '```',
-              raw,
+              kept || raw.trim(),
               '```',
+              '</details>',
             ].join('\n');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
