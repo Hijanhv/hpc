@@ -267,4 +267,5 @@ on `PATH` for the daemon/agent build scripts, and `libclang` for `hpc-ffi`'s
 
 ## License
 
-Dual-licensed under either of Apache-2.0 or MIT at your option.
+ Apache-2.0 
+ MIT 
