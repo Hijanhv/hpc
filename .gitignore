@@ -6,7 +6,17 @@
 /data
 **/*.redb
 .hpc-bench.dat
+.hpc-bench-ffi.dat
 report.json
+
+# Tooling output (scripts/, hpc-diag)
+/bench-results
+/bench-scratch
+/dist
+hpc-dist-*.tar.gz
+hpc-logs-*.tar.gz
+bench-output.txt
+diag.json
 
 # Criterion output
 /target/criterion

@@ -16,7 +16,14 @@
 //! deliberately: the goal is a portable, dependency-light demonstrator, not a
 //! substitute for `fio`. The write path optionally `fsync`s to measure durable
 //! write latency.
+//!
+//! A second, synchronous path lives in [`ffi_raw`]: it drives the C
+//! `pread`/`pwrite`/`fsync` shim in [`hpc-ffi`](hpc_ffi) so the same histogram
+//! machinery can measure positioned raw I/O for comparison against the async
+//! buffered path here.
 #![forbid(unsafe_code)]
+
+pub mod ffi_raw;
 
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
@@ -260,18 +267,18 @@ fn fill_block(size: usize) -> Vec<u8> {
     (0..size).map(|i| (i % 251) as u8).collect()
 }
 
-fn new_histogram() -> Result<Histogram<u64>> {
+pub(crate) fn new_histogram() -> Result<Histogram<u64>> {
     Histogram::new_with_bounds(1, MAX_LATENCY_US, 3)
         .map_err(|e| HpcError::Bench(format!("histogram init: {e}")))
 }
 
-fn record(hist: &mut Histogram<u64>, elapsed: std::time::Duration) {
+pub(crate) fn record(hist: &mut Histogram<u64>, elapsed: std::time::Duration) {
     let us = elapsed.as_micros().min(MAX_LATENCY_US as u128) as u64;
     // saturating_record never errors and clamps to the tracked range.
     hist.saturating_record(us.max(1));
 }
 
-fn summarise(
+pub(crate) fn summarise(
     pattern: IoPattern,
     block_size: u64,
     blocks: u64,

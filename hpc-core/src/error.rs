@@ -71,6 +71,14 @@ pub enum HpcError {
     /// A value could not be represented in the target protocol type.
     #[error("protocol conversion error: {0}")]
     Conversion(String),
+
+    /// A C FFI call into the native I/O shim failed.
+    #[error("ffi error: {0}")]
+    Ffi(String),
+
+    /// Collecting or parsing a diagnostic source failed.
+    #[error("diagnostics error: {0}")]
+    Diag(String),
 }
 
 impl HpcError {
@@ -100,6 +108,16 @@ impl HpcError {
     /// Convenience constructor for [`HpcError::Conversion`].
     pub fn conversion(msg: impl std::fmt::Display) -> Self {
         HpcError::Conversion(msg.to_string())
+    }
+
+    /// Convenience constructor for [`HpcError::Ffi`].
+    pub fn ffi(msg: impl std::fmt::Display) -> Self {
+        HpcError::Ffi(msg.to_string())
+    }
+
+    /// Convenience constructor for [`HpcError::Diag`].
+    pub fn diag(msg: impl std::fmt::Display) -> Self {
+        HpcError::Diag(msg.to_string())
     }
 
     /// True when the error is plausibly transient and the operation could be

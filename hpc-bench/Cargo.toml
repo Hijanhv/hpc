@@ -14,6 +14,7 @@ path = "src/lib.rs"
 
 [dependencies]
 hpc-core.workspace = true
+hpc-ffi.workspace = true
 tokio = { workspace = true }
 serde.workspace = true
 tracing.workspace = true
@@ -27,4 +28,8 @@ tempfile = "3"
 
 [[bench]]
 name = "io_bench"
+harness = false
+
+[[bench]]
+name = "ffi_bench"
 harness = false

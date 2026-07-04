@@ -1,0 +1,83 @@
+name: bench
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Needed so the PR-comment step can write to the pull request.
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bench:
+    name: criterion I/O benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler llvm-dev libclang-dev clang
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bench-
+            ${{ runner.os }}-cargo-
+
+      # Criterion's `bencher` output format is compact and stable, ideal for
+      # capturing into a comment or diffing between runs.
+      - name: Run benchmarks
+        run: cargo bench -p hpc-bench -- --output-format bencher | tee bench-output.txt
+
+      # On a pull request, surface the numbers inline so reviewers see the
+      # performance impact without leaving the PR.
+      - name: Comment results on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const raw = fs.readFileSync('bench-output.txt', 'utf8').trim();
+            const body = [
+              '## 📊 hpc-bench (criterion)',
+              '',
+              'Async buffered I/O (`io`) and raw FFI I/O (`ffi_raw`), ns/iter:',
+              '',
+              '```',
+              raw,
+              '```',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      # On main, keep the raw numbers as an artifact to serve as a baseline.
+      - name: Upload baseline (main)
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-baseline
+          path: bench-output.txt
+          retention-days: 90

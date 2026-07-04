@@ -1,0 +1,23 @@
+[package]
+name = "hpc-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Safe Rust wrappers over a C POSIX block-I/O shim (cc + bindgen FFI bridge)"
+
+[lib]
+name = "hpc_ffi"
+path = "src/lib.rs"
+
+[dependencies]
+hpc-core.workspace = true
+
+[build-dependencies]
+bindgen.workspace = true
+cc.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

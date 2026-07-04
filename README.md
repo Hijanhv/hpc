@@ -11,6 +11,13 @@ Written in async Rust. Every crate propagates errors properly (no `unwrap()` in
 library code), traces with `tracing`, and is configured with `serde` + TOML.
 Daemon ⇄ agent communication is gRPC over `tonic`.
 
+It also carries the systems-level and operational surface a real deployment
+needs: a **C FFI bridge** for raw block I/O (`hpc-ffi`, built with `cc` +
+`bindgen`), a `/proc`-based **multi-platform diagnostics** bundler (`hpc-diag`),
+a set of production **operations scripts** (`scripts/`), and **CI/CD** for both
+GitHub Actions and Jenkins. Contribution follows a Gerrit-style patch-based
+review workflow — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ```
                             ┌──────────────────────────────────────────────┐
                             │                 hpc-daemon                   │
@@ -27,7 +34,13 @@ Daemon ⇄ agent communication is gRPC over `tonic`.
                             └─────────────────────────────────────────────────┘
 
  hpc-bench ── async I/O benchmark suite (seq/rand read/write, HdrHistogram) ──▶ used by `hpc bench`
+ hpc-ffi  ── C POSIX I/O shim (cc + bindgen): raw pread/pwrite/fsync ──▶ used by hpc-bench
+ hpc-diag ── /proc parsing + platform-difference detection ──▶ JSON diagnostic bundle
  hpc-core ── shared types · config · error · tracing (every crate depends on it)
+
+ scripts/            ── setup · deploy-agent (ssh) · bench-run · log-collect · ci-local
+ .github/workflows/  ── ci.yml (fmt·clippy·test·build) · bench.yml (criterion → PR comment)
+ Jenkinsfile         ── declarative pipeline: Checkout→Build→Test→Bench→Package
 ```
 
 ## Architecture
@@ -82,7 +95,9 @@ Agents report each command's outcome back with a unary RPC. See
 | [`hpc-agent`](hpc-agent/) | bin | Per-node agent: `sysinfo` + `/proc` metrics collection, gRPC client, command executor. |
 | [`hpc-cli`](hpc-cli/) | bin (`hpc`) | Operator CLI: `node` (list/deploy/status), `fs` (mount/unmount/status), `bench` (run/report). |
 | [`hpc-monitor`](hpc-monitor/) | bin | Prometheus `/metrics` endpoint, scrape loop, threshold-based degradation detection. |
-| [`hpc-bench`](hpc-bench/) | lib + bench | Async I/O benchmark suite: sequential + random read/write, latency histograms, Criterion benches. |
+| [`hpc-bench`](hpc-bench/) | lib + bench | Async I/O benchmark suite: sequential + random read/write, latency histograms, Criterion benches. Also drives the raw FFI path via `hpc-ffi`. |
+| [`hpc-ffi`](hpc-ffi/) | lib | C-interop layer: a native POSIX block-I/O shim (`pread`/`pwrite`/`fsync`) compiled with `cc`, bound with `bindgen`, wrapped in a safe Rust API. The one crate with `unsafe`. |
+| [`hpc-diag`](hpc-diag/) | lib + bin | Multi-platform diagnostics: parses `/proc/{meminfo,diskstats,net/dev,mounts,version}`, detects platform differences that could explain bugs, and emits a JSON bundle. |
 
 ## The control-plane protocol
 
@@ -156,6 +171,70 @@ CI. Set `allow_exec = true` to actually spawn `mount`/`umount`/`fsck`. The
 destructive `format` action additionally requires `force = true`, enforced both
 at the REST boundary and in the executor.
 
+## C FFI bridge (`hpc-ffi`)
+
+`hpc-ffi` wraps a tiny native shim ([`hpc-ffi/src/hpc_io.c`](hpc-ffi/src/hpc_io.c))
+that does positioned POSIX I/O — `open`, `pread`, `pwrite`, `fsync` — behind a
+safe Rust API. The build script compiles the C with the [`cc`](https://docs.rs/cc)
+crate and generates the `extern "C"` declarations with
+[`bindgen`](https://docs.rs/bindgen), so the layering is:
+
+```
+safe Rust (BlockFile)  →  bindgen-generated decls  →  raw POSIX syscalls (C)
+```
+
+The shim returns a negated errno on failure, which the wrapper turns back into a
+`std::io::Error` and surfaces as `HpcError::Ffi`. This is the **only** crate in
+the workspace that contains `unsafe`; every `unsafe` block carries a `// SAFETY:`
+justification, and the rest of the workspace keeps `#![forbid(unsafe_code)]`.
+`hpc-bench` uses it for a synchronous raw-I/O benchmark (`ffi_raw`) to contrast
+with the async buffered path.
+
+## Diagnostics & bug analysis (`hpc-diag`)
+
+`hpc-diag` gathers a machine-readable snapshot of a node for incident triage:
+
+```bash
+hpc-diag collect --output diag.json          # pretty JSON bundle to a file
+hpc-diag collect --output - --compact | jq   # stream to stdout for piping
+```
+
+It parses `/proc/meminfo`, `/proc/diskstats`, `/proc/net/dev`, `/proc/mounts`
+and `/proc/version` into typed structs, folds in any structured `DiagReport`s
+contributed by other crates, and runs heuristics that flag **platform
+differences that could explain bugs** — memory pressure, pre-`io_uring`
+kernels, heterogeneous filesystems, ephemeral (`tmpfs`/`overlay`) state
+directories, a read-only root. Collection never aborts on a missing source: on a
+non-Linux host each unavailable collector is recorded as a warning inside the
+bundle, so you always get a well-formed document describing exactly what could
+and could not be observed.
+
+## Operations scripts (`scripts/`)
+
+Production-shaped Bash (`set -euo pipefail`, usage docs, colored output):
+
+| Script | Purpose |
+|--------|---------|
+| [`setup.sh`](scripts/setup.sh) | Verify the Rust toolchain, install native deps (`protoc`, `libclang`), prime the cargo cache. |
+| [`deploy-agent.sh`](scripts/deploy-agent.sh) | Build and deploy `hpc-agent` to a remote node over SSH (atomic binary swap, optional start). |
+| [`bench-run.sh`](scripts/bench-run.sh) | Run `hpc bench` and archive a timestamped report + host metadata. |
+| [`log-collect.sh`](scripts/log-collect.sh) | Pull logs and live diagnostics from a set of nodes into a single tar bundle. |
+| [`ci-local.sh`](scripts/ci-local.sh) | Run the full CI gate (fmt · clippy · test · build) locally before pushing. |
+
+## CI/CD
+
+- **GitHub Actions** — [`ci.yml`](.github/workflows/ci.yml) runs fmt, clippy
+  (`-D warnings`), tests and a release build on every push and PR, with cargo
+  caching; [`bench.yml`](.github/workflows/bench.yml) runs the Criterion
+  benchmarks and posts the numbers as a PR comment (and stores a baseline on
+  `main`).
+- **Jenkins** — [`Jenkinsfile`](Jenkinsfile) is a declarative pipeline
+  (`Checkout → Toolchain → Lint → Build → Test → Bench → Package`) that archives
+  the release binaries and benchmark output and reports status back to GitHub.
+
+Both enforce the same gate as `scripts/ci-local.sh`. Review follows a
+Gerrit-style patch-based workflow documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## Engineering conventions
 
 - **No `unwrap()` in library code.** Everything returns
@@ -172,14 +251,19 @@ at the REST boundary and in the executor.
 ## Development
 
 ```bash
+scripts/setup.sh                # one-time: toolchain + native deps + cargo fetch
+scripts/ci-local.sh             # the full gate: fmt · clippy · test · build
+
+# …or the individual steps:
 cargo test --workspace          # unit + integration tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
-cargo bench -p hpc-bench        # Criterion I/O micro-benchmarks
+cargo bench -p hpc-bench        # Criterion I/O micro-benchmarks (async + raw FFI)
 ```
 
-Requires a recent stable Rust (1.82+) and `protoc` (the Protocol Buffers
-compiler) on `PATH` for the daemon/agent build scripts.
+Requires a recent stable Rust (1.82+), `protoc` (the Protocol Buffers compiler)
+on `PATH` for the daemon/agent build scripts, and `libclang` for `hpc-ffi`'s
+`bindgen` step. `scripts/setup.sh` installs all three.
 
 ## License
 
